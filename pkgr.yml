@@ -1,0 +1,38 @@
+Version: 1
+
+Packages:
+  - bitops
+  - caTools
+  - data.table
+  - diffobj
+  - here
+  - markdown
+  - mrggsave
+  - pmplots
+  - pmtables
+  - sessioninfo
+  - styler
+  - templ
+  - tidyverse
+  - vpc
+  - yspec
+  - tidymodels
+  - xgboost
+
+Repos:
+  - templ: https://s3.amazonaws.com/mpn.metworx.dev/releases/templ/0.1.0
+  - MPN: https://mpn.metworx.com/snapshots/stable/2023-03-13
+
+Customizations:
+  Packages:
+  - bbr: {Suggests: true}
+  - templ: {Type: source}
+  - arrow: 
+      Env:
+        NOT_CRAN: 'true'
+        LIBARROW_MINIMAL: 'false'      
+
+Lockfile:
+    Type: renv
+
+Rpath: ${R_EXE_4_1}
