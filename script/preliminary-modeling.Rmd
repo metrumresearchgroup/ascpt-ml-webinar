@@ -1,0 +1,129 @@
+---
+title: "Preliminary Modeling"
+author: "Matthew Wiens"
+output: pdf_document
+date: '2023-05-24'
+editor_options: 
+  chunk_output_type: console
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidymodels)
+library(xgboost)
+
+data_dir <- here::here("data", "source")
+```
+
+Data source: https://archive.ics.uci.edu/ml/datasets/breast+cancer
+
+```{R}
+
+input_column_names <- c("Class", "age", "menopause", "tumor_size", "inv_nodes", "node_caps", "deg_malig", "breast", "breast_quad", "irradiat")
+
+dat_raw <- read_csv(file = file.path(data_dir, "breast-cancer.data"),
+         col_names = input_column_names,
+         na = c("", "NA", "?")) 
+  
+
+```
+
+Data description:
+
+   1. Class: no-recurrence-events, recurrence-events
+   2. age: 10-19, 20-29, 30-39, 40-49, 50-59, 60-69, 70-79, 80-89, 90-99.
+   3. menopause: lt40, ge40, premeno.
+   4. tumor-size: 0-4, 5-9, 10-14, 15-19, 20-24, 25-29, 30-34, 35-39, 40-44,
+                  45-49, 50-54, 55-59.
+   5. inv-nodes: 0-2, 3-5, 6-8, 9-11, 12-14, 15-17, 18-20, 21-23, 24-26,
+                 27-29, 30-32, 33-35, 36-39.
+   6. node-caps: yes, no.
+   7. deg-malig: 1, 2, 3.
+   8. breast: left, right.
+   9. breast-quad: left-up, left-low, right-up, right-low, central.
+  10. irradiat: yes, no.
+  
+  
+Cleanup the ordered categories to be numeric here  
+```{R}
+dat <- dat_raw %>%
+  mutate(class_n = Class == "recurrence-events",
+         age_f = factor(age, ordered = T),
+         tumor_size_f = factor(tumor_size,
+                               ordered = T, 
+                               levels = c("0-4", "5-9", "10-14", "15-19",
+                                          "20-24", "25-29", "30-34", "35-39", 
+                                          "40-44", "45-49",  "50-54")),
+         inv_nodes_f = factor(inv_nodes, 
+                              ordered = T,
+                              levels = c("0-2", "3-5", "6-8", "9-11", "12-14", "15-17", "24-26")),
+         irradiat_n = irradiat == "yes",
+         node_caps_n = node_caps == "yes",
+         breast_left = breast == "left"
+  )
+
+
+init_split <- initial_split(dat)
+```
+
+
+Create a matrix for xgboost
+
+
+```{R}
+
+recipie_xgboost <- recipes::recipe(class_n ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + deg_malig + breast_left + breast_quad + irradiat_n, 
+                data = training(init_split)) %>%
+  step_ordinalscore(age_f, tumor_size_f, inv_nodes_f) %>%
+  step_dummy(breast_quad, menopause, one_hot = T)
+
+estimated_preprocessing <- prep(recipie_xgboost, training(init_split))
+
+x_train <- bake(estimated_preprocessing, training(init_split)) %>% select(-class_n) %>% as.matrix()
+y_train <- bake(estimated_preprocessing, training(init_split)) %>% pull(class_n) 
+
+x_test <- bake(estimated_preprocessing, testing(init_split)) %>% select(-class_n) %>% as.matrix()
+y_test <- bake(estimated_preprocessing, testing(init_split)) %>% pull(class_n) 
+
+```
+
+Fit the model with default params 
+
+```{R}
+
+fit1 <- xgboost::xgboost(data = x_train, 
+                         label = y_train,
+                         nrounds = 15,
+                         params = list(
+                           objective = "binary:logistic"
+                         ))
+
+```
+
+Evaluate fit
+
+```{R}
+
+predictions <- testing(init_split) %>%
+  mutate(pred_pr = predict(fit1, x_test))
+
+predictions %>%
+  mutate(truth = factor(Class, levels = c("no-recurrence-events", "recurrence-events"))) %>%
+  roc_auc(pred_pr, truth = truth, estimator = "binary", event_level = "second")
+
+predictions %>%
+  mutate(truth = factor(Class, levels = c("no-recurrence-events", "recurrence-events")),
+         pred = factor(if_else(pred_pr >= 0.5, "recurrence-events", "no-recurrence-events"),  levels = c("no-recurrence-events", "recurrence-events"))) %>%
+  yardstick::conf_mat(estimate = pred, truth = truth)
+
+
+```
+
+
+# Hyperparameter Tuning
+
+Also, something about imbalanced classes
