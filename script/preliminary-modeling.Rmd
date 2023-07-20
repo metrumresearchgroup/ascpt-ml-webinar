@@ -52,6 +52,7 @@ Cleanup the ordered categories to be numeric here
 ```{R}
 dat <- dat_raw %>%
   mutate(class_n = Class == "recurrence-events",
+         Class = factor(Class, levels = c("no-recurrence-events", "recurrence-events")),
          age_f = factor(age, ordered = T),
          tumor_size_f = factor(tumor_size,
                                ordered = T, 
@@ -124,6 +125,85 @@ predictions %>%
 ```
 
 
-# Hyperparameter Tuning
+# Hyperparameter Tuning and Tidymodels
 
-Also, something about imbalanced classes
+
+Source: https://juliasilge.com/blog/xgboost-tune-volleyball/
+```{R}
+# This version needs factors
+recipie_xgboost_tidymodels <- recipes::recipe(
+  Class ~age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
+    deg_malig + breast_left + breast_quad + irradiat_n, 
+                data = training(init_split)) %>%
+  step_impute_mode(all_nominal_predictors()) %>%
+  step_impute_mean(all_numeric_predictors()) %>%
+  step_ordinalscore(age_f, tumor_size_f, inv_nodes_f) %>%
+  step_mutate(node_caps_n = as.numeric(node_caps_n), 
+              breast_left = as.numeric(breast_left), 
+              irradiat_n = as.numeric(irradiat_n)) %>%
+  step_dummy(breast_quad, menopause, one_hot = T) 
+  
+
+estimated_preprocessing2 <- prep(recipie_xgboost_tidymodels, training(init_split))
+
+bake(estimated_preprocessing2, training(init_split))
+
+# Everything that could be tuned, within reason
+xgb_spec_all <- boost_tree(
+  trees = 1000,
+  tree_depth = tune(),
+  min_n = tune(),
+  loss_reduction = tune(),        
+  sample_size = tune(), 
+  mtry = tune(),        
+  learn_rate = tune()      
+) %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+
+
+xgb_spec <- boost_tree(
+  trees = 15,
+  tree_depth = tune(),
+  min_n = tune(),
+  loss_reduction = 0,        
+  sample_size = 1.0, 
+  #mtry = tune(),        
+  learn_rate = 0.3      
+) %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+
+xgb_grid <- grid_latin_hypercube(
+  tree_depth(),
+  min_n(),
+  size = 25
+)
+
+# Combine preprocessing and fitting into a "workflow"
+xgb_wf <- workflow() %>%
+  add_recipe(recipie_xgboost_tidymodels) %>%
+  add_model(xgb_spec)
+
+# Set up cross-validation  
+cv_folds <- vfold_cv(training(init_split), v = 10)
+
+#doParallel::registerDoParallel()
+
+set.seed(1234)
+
+# Question: How many models do we have to fit?
+
+tuning_results <- tune_grid(
+  xgb_wf,
+  resamples = cv_folds,
+  grid = xgb_grid,
+  control = control_grid(save_pred = TRUE)
+)
+
+collect_metrics(tuning_results)
+
+
+```
+
+## Also, something about imbalanced classes
