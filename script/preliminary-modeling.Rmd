@@ -52,7 +52,7 @@ Cleanup the ordered categories to be numeric here
 ```{R}
 dat <- dat_raw %>%
   mutate(class_n = Class == "recurrence-events",
-         Class = factor(Class, levels = c("no-recurrence-events", "recurrence-events")),
+         Class = factor(Class, levels = c("recurrence-events", "no-recurrence-events")),
          age_f = factor(age, ordered = T),
          tumor_size_f = factor(tumor_size,
                                ordered = T, 
@@ -64,7 +64,8 @@ dat <- dat_raw %>%
                               levels = c("0-2", "3-5", "6-8", "9-11", "12-14", "15-17", "24-26")),
          irradiat_n = irradiat == "yes",
          node_caps_n = node_caps == "yes",
-         breast_left = breast == "left"
+         breast_left = breast == "left",
+         case_weight = importance_weights(if_else(class_n == 0, 1, 201/85)) # For later
   )
 
 
@@ -113,12 +114,12 @@ predictions <- testing(init_split) %>%
   mutate(pred_pr = predict(fit1, x_test))
 
 predictions %>%
-  mutate(truth = factor(Class, levels = c("no-recurrence-events", "recurrence-events"))) %>%
-  roc_auc(pred_pr, truth = truth, estimator = "binary", event_level = "second")
+  mutate(truth = Class) %>%
+  roc_auc(pred_pr, truth = truth, estimator = "binary", event_level = "first")
 
 predictions %>%
-  mutate(truth = factor(Class, levels = c("no-recurrence-events", "recurrence-events")),
-         pred = factor(if_else(pred_pr >= 0.5, "recurrence-events", "no-recurrence-events"),  levels = c("no-recurrence-events", "recurrence-events"))) %>%
+  mutate(truth = Class,
+         pred = factor(if_else(pred_pr >= 0.5, "no-recurrence-events", "recurrence-events", ),  levels = c("recurrence-events", "no-recurrence-events"))) %>%
   yardstick::conf_mat(estimate = pred, truth = truth)
 
 
@@ -177,7 +178,7 @@ xgb_spec <- boost_tree(
 xgb_grid <- grid_latin_hypercube(
   tree_depth(),
   min_n(),
-  size = 25
+  size = 50
 )
 
 # Combine preprocessing and fitting into a "workflow"
@@ -186,7 +187,7 @@ xgb_wf <- workflow() %>%
   add_model(xgb_spec)
 
 # Set up cross-validation  
-cv_folds <- vfold_cv(training(init_split), v = 10)
+cv_folds <- vfold_cv(training(init_split), v = 5)
 
 #doParallel::registerDoParallel()
 
@@ -198,12 +199,138 @@ tuning_results <- tune_grid(
   xgb_wf,
   resamples = cv_folds,
   grid = xgb_grid,
-  control = control_grid(save_pred = TRUE)
+  control = control_grid(save_pred = TRUE, verbose = TRUE,  event_level = "first")
 )
 
 collect_metrics(tuning_results)
+
+best_auc <- select_best(tuning_results, "roc_auc")
+
+# Create the final model, with actual values for the hyperparameters 
+final_wf <- finalize_workflow(
+  xgb_wf,
+  best_auc
+)
+
+final_fit <- final_wf %>%
+  last_fit(init_split) 
+
+final_fit %>%
+  collect_predictions() %>% 
+  roc_curve(Class, `.pred_recurrence-events`, event_level = "first") %>% 
+  autoplot()
+
+final_fit %>%
+    collect_predictions() %>% 
+    roc_auc(Class, `.pred_recurrence-events`, event_level = "first")
+
+final_fit %>%
+    collect_predictions() %>% 
+    accuracy(Class, .pred_class)
+
+# Question: Is this accuracy good for this dataset? What accuracy would a very naive algorithm have? 
+
+# Answer: Well a model always predicting no events would have approx 70% accuracy
+
+# Question: What about focusing on the patients with recurrence-events? What are alternatives to ROC in the yardstick package for calculating an AUC?
+
+final_fit %>%
+  collect_predictions() %>% 
+  pr_curve(Class, `.pred_recurrence-events`, event_level = "first") %>% 
+  autoplot()
+
+final_fit %>%
+    collect_predictions() %>% 
+    pr_auc(Class, `.pred_recurrence-events`, event_level = "first")
 
 
 ```
 
 ## Also, something about imbalanced classes
+
+```{R}
+
+set.seed(12345)
+
+recipie_xgboost_tidymodels_weights <- recipes::recipe(
+  Class ~age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
+    deg_malig + breast_left + breast_quad + irradiat_n + case_weight, 
+                data = training(init_split)) %>%
+  step_impute_mode(all_nominal_predictors()) %>%
+  step_impute_mean(all_numeric_predictors()) %>%
+  step_ordinalscore(age_f, tumor_size_f, inv_nodes_f) %>%
+  step_mutate(node_caps_n = as.numeric(node_caps_n), 
+              breast_left = as.numeric(breast_left), 
+              irradiat_n = as.numeric(irradiat_n)) %>%
+  step_dummy(breast_quad, menopause, one_hot = T) 
+
+xgb_wf_weights <- xgb_wf %>%
+  update_recipe(recipie_xgboost_tidymodels_weights) %>%
+  add_case_weights(case_weight)
+
+tuning_results_weights <- tune_grid(
+  xgb_wf_weights,
+  resamples = cv_folds,
+  grid = xgb_grid,
+  control = control_grid(save_pred = TRUE, verbose = TRUE,  event_level = "first")
+)
+
+collect_metrics(tuning_results_weights)
+
+best_auc_weighted <- select_best(tuning_results_weights, "pr_auc")
+
+
+# Create the final model, with actual values for the hyperparameters 
+final_wf_weighted <- finalize_workflow(
+  xgb_wf_weights,
+  best_auc_weighted
+)
+
+final_fit_weighted <- final_wf_weighted %>%
+  last_fit(init_split) 
+
+final_fit_weighted %>%
+  collect_predictions() %>% 
+  pr_curve(Class, `.pred_recurrence-events`, event_level = "first") %>% 
+  autoplot()
+
+final_fit_weighted %>%
+    collect_predictions() %>% 
+    pr_auc(Class, `.pred_recurrence-events`, event_level = "first")
+
+
+final_fit_weighted %>%
+    collect_predictions() %>% 
+    roc_auc(Class, `.pred_recurrence-events`, event_level = "first")
+```
+
+
+## Model interpretation with Shapley Values
+
+
+```{R}
+
+# Note the shapley values are for predicting the first class in the Class factor, which is no recurrence events
+p <- xgb.ggplot.shap.summary(data = bake(extract_recipe(final_fit), testing(init_split)) %>% select(-Class) %>% as.matrix(),
+                        model = extract_fit_parsnip(final_fit)$fit) +
+  labs(x = "Shapley Value", color = "Feature Value") 
+
+p
+
+
+
+```
+
+Check tumor size makes sense with the predictions
+
+```{R}
+
+x_predict <- testing(init_split)[1,] %>%
+  select(-tumor_size_f) %>%
+  dplyr::inner_join(tibble(tumor_size_f = c("0-4", "50-54")), by = character())
+
+
+predict(extract_workflow(final_fit),
+        new_data = x_predict,
+        type = "prob")
+```
