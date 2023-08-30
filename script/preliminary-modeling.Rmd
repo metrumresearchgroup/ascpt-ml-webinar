@@ -9,6 +9,10 @@ editor_options:
 
 # Setup
 
+
+
+Load libraries and set up file paths.
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
@@ -23,8 +27,10 @@ Data source: https://archive.ics.uci.edu/ml/datasets/breast+cancer
 
 ```{R}
 
+# Pull names from the data description file, since the csv does not have column names
 input_column_names <- c("Class", "age", "menopause", "tumor_size", "inv_nodes", "node_caps", "deg_malig", "breast", "breast_quad", "irradiat")
 
+# Load data, with options for this specific dataset 
 dat_raw <- read_csv(file = file.path(data_dir, "breast-cancer.data"),
          col_names = input_column_names,
          na = c("", "NA", "?")) 
@@ -50,6 +56,11 @@ Data description:
   
 Cleanup the ordered categories to be numeric here  
 ```{R}
+
+# Further preprocessing, using tidyverse
+# Trees naturally handle ordered factors (categorical) covariates,
+# so we code the data in that way
+# The importance_weights column will be used later in the script
 dat <- dat_raw %>%
   mutate(class_n = Class == "recurrence-events",
          Class = factor(Class, levels = c("recurrence-events", "no-recurrence-events")),
@@ -65,26 +76,29 @@ dat <- dat_raw %>%
          irradiat_n = irradiat == "yes",
          node_caps_n = node_caps == "yes",
          breast_left = breast == "left",
-         case_weight = importance_weights(if_else(class_n == 0, 1, 201/85)) # For later
+         case_weight = importance_weights(if_else(class_n == 0, 1, 201/85))
   )
 
-
+# Create the training/testing split with the tidymodels package
 init_split <- initial_split(dat)
 ```
 
 
-Create a matrix for xgboost
-
+Create the formatted datasets for training and testing in a format for xgboost, which is a matrix. 
+Also, the recipes package is used to preprocess categorical and ordinal covariates into numerics for xgboost.
 
 ```{R}
 
-recipie_xgboost <- recipes::recipe(class_n ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + deg_malig + breast_left + breast_quad + irradiat_n, 
+# This is like specifying a model, but for data pre-proecessing 
+recipe_xgboost <- recipes::recipe(class_n ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + deg_malig + breast_left + breast_quad + irradiat_n, 
                 data = training(init_split)) %>%
   step_ordinalscore(age_f, tumor_size_f, inv_nodes_f) %>%
   step_dummy(breast_quad, menopause, one_hot = T)
 
-estimated_preprocessing <- prep(recipie_xgboost, training(init_split))
+# This is like fitting the model 
+estimated_preprocessing <- prep(recipe_xgboost, training(init_split))
 
+# This is like using the model to make predictions
 x_train <- bake(estimated_preprocessing, training(init_split)) %>% select(-class_n) %>% as.matrix()
 y_train <- bake(estimated_preprocessing, training(init_split)) %>% pull(class_n) 
 
@@ -93,7 +107,7 @@ y_test <- bake(estimated_preprocessing, testing(init_split)) %>% pull(class_n)
 
 ```
 
-Fit the model with default params 
+Fit the model with default tuning parameters. 
 
 ```{R}
 
@@ -110,18 +124,22 @@ Evaluate fit
 
 ```{R}
 
+# Using the test set here, which was not used to fit the model
 predictions <- testing(init_split) %>%
   mutate(pred_pr = predict(fit1, x_test))
 
+# ROC curves are a common way to assess a binary prediction
 predictions %>%
   mutate(truth = Class) %>%
   roc_auc(pred_pr, truth = truth, estimator = "binary", event_level = "first")
 
+# Confusion matrix for predictions
 predictions %>%
   mutate(truth = Class,
          pred = factor(if_else(pred_pr >= 0.5, "no-recurrence-events", "recurrence-events", ),  levels = c("recurrence-events", "no-recurrence-events"))) %>%
   yardstick::conf_mat(estimate = pred, truth = truth)
 
+# The yardstick package has many functions to evaluate (and plot evaluation) of models, and works in the tidymodels package
 
 ```
 
@@ -131,8 +149,11 @@ predictions %>%
 
 Source: https://juliasilge.com/blog/xgboost-tune-volleyball/
 ```{R}
-# This version needs factors
-recipie_xgboost_tidymodels <- recipes::recipe(
+
+# Slightly tweak the formatting of the dataset for tidymodels format
+# Also, for simplification of code, we'll just impute missing values
+# Even though in the previous example xgboost cleanly handles them 
+recipe_xgboost_tidymodels <- recipes::recipe(
   Class ~age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
     deg_malig + breast_left + breast_quad + irradiat_n, 
                 data = training(init_split)) %>%
@@ -144,12 +165,15 @@ recipie_xgboost_tidymodels <- recipes::recipe(
               irradiat_n = as.numeric(irradiat_n)) %>%
   step_dummy(breast_quad, menopause, one_hot = T) 
   
-
-estimated_preprocessing2 <- prep(recipie_xgboost_tidymodels, training(init_split))
+# Using the recipes again
+estimated_preprocessing2 <- prep(recipe_xgboost_tidymodels, training(init_split))
 
 bake(estimated_preprocessing2, training(init_split))
 
 # Everything that could be tuned, within reason
+# But this isn't the most practical approach (curse of dimensionality)
+# Also, note the tuning parameter names are slightly different in tidymodels
+# compared to xgboost
 xgb_spec_all <- boost_tree(
   trees = 1000,
   tree_depth = tune(),
@@ -163,18 +187,20 @@ xgb_spec_all <- boost_tree(
   set_mode("classification")
 
 
+# Here's a more limited set of parameters to tune
 xgb_spec <- boost_tree(
   trees = 15,
   tree_depth = tune(),
   min_n = tune(),
   loss_reduction = 0,        
   sample_size = 1.0, 
-  #mtry = tune(),        
   learn_rate = 0.3      
 ) %>%
   set_engine("xgboost") %>%
   set_mode("classification")
 
+# One way to select the points to tune
+# See the help/google for more details
 xgb_grid <- grid_latin_hypercube(
   tree_depth(),
   min_n(),
@@ -183,18 +209,17 @@ xgb_grid <- grid_latin_hypercube(
 
 # Combine preprocessing and fitting into a "workflow"
 xgb_wf <- workflow() %>%
-  add_recipe(recipie_xgboost_tidymodels) %>%
+  add_recipe(recipe_xgboost_tidymodels) %>%
   add_model(xgb_spec)
 
 # Set up cross-validation  
 cv_folds <- vfold_cv(training(init_split), v = 5)
 
-#doParallel::registerDoParallel()
-
 set.seed(1234)
 
 # Question: How many models do we have to fit?
 
+# Run the cross-validation
 tuning_results <- tune_grid(
   xgb_wf,
   resamples = cv_folds,
@@ -202,8 +227,11 @@ tuning_results <- tune_grid(
   control = control_grid(save_pred = TRUE, verbose = TRUE,  event_level = "first")
 )
 
+# Summary of the results
 collect_metrics(tuning_results)
 
+# Analysis of the results
+# ROC AUC
 best_auc <- select_best(tuning_results, "roc_auc")
 
 # Create the final model, with actual values for the hyperparameters 
@@ -212,6 +240,7 @@ final_wf <- finalize_workflow(
   best_auc
 )
 
+# Some ways to examine the final fit
 final_fit <- final_wf %>%
   last_fit(init_split) 
 
@@ -252,7 +281,7 @@ final_fit %>%
 
 set.seed(12345)
 
-recipie_xgboost_tidymodels_weights <- recipes::recipe(
+recipe_xgboost_tidymodels_weights <- recipes::recipe(
   Class ~age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
     deg_malig + breast_left + breast_quad + irradiat_n + case_weight, 
                 data = training(init_split)) %>%
@@ -265,7 +294,7 @@ recipie_xgboost_tidymodels_weights <- recipes::recipe(
   step_dummy(breast_quad, menopause, one_hot = T) 
 
 xgb_wf_weights <- xgb_wf %>%
-  update_recipe(recipie_xgboost_tidymodels_weights) %>%
+  update_recipe(recipe_xgboost_tidymodels_weights) %>%
   add_case_weights(case_weight)
 
 tuning_results_weights <- tune_grid(
@@ -311,25 +340,28 @@ final_fit_weighted %>%
 ```{R}
 
 # Note the shapley values are for predicting the first class in the Class factor, which is no recurrence events
-p <- xgb.ggplot.shap.summary(data = bake(extract_recipe(final_fit), testing(init_split)) %>% select(-Class) %>% as.matrix(),
+# Always good to pay attention to how R and libraries are using factor orderings
+shap_plot <- xgb.ggplot.shap.summary(data = bake(extract_recipe(final_fit), testing(init_split)) %>% select(-Class) %>% as.matrix(),
                         model = extract_fit_parsnip(final_fit)$fit) +
   labs(x = "Shapley Value", color = "Feature Value") 
 
-p
+shap_plot
 
 
 
 ```
 
-Check tumor size makes sense with the predictions
+Sanity check the shapley predictions by making predictions for two different values of tumor sizes for one set of covariate values
 
 ```{R}
 
+# Create a dataset of covariates to make predictions
 x_predict <- testing(init_split)[1,] %>%
   select(-tumor_size_f) %>%
   dplyr::inner_join(tibble(tumor_size_f = c("0-4", "50-54")), by = character())
 
 
+# Make the predictions
 predict(extract_workflow(final_fit),
         new_data = x_predict,
         type = "prob")
