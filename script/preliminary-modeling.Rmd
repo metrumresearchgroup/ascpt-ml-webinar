@@ -9,8 +9,6 @@ editor_options:
 
 # Setup
 
-
-
 Load libraries and set up file paths.
 
 ```{r setup, include=FALSE}
