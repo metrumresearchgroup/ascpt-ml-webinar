@@ -28,12 +28,25 @@ Data source: https://archive.ics.uci.edu/ml/datasets/breast+cancer
 ```{R}
 
 # Pull names from the data description file, since the csv does not have column names
-input_column_names <- c("Class", "age", "menopause", "tumor_size", "inv_nodes", "node_caps", "deg_malig", "breast", "breast_quad", "irradiat")
+input_column_names <- c(
+  "Class",
+  "age",
+  "menopause",
+  "tumor_size",
+  "inv_nodes",
+  "node_caps",
+  "deg_malig",
+  "breast",
+  "breast_quad",
+  "irradiat"
+)
 
-# Load data, with options for this specific dataset 
-dat_raw <- read_csv(file = file.path(data_dir, "breast-cancer.data"),
-         col_names = input_column_names,
-         na = c("", "NA", "?")) 
+# Load data, with options for this specific dataset
+dat_raw <- read_csv(
+  file = file.path(data_dir, "breast-cancer.data"),
+  col_names = input_column_names,
+  na = c("", "NA", "?")
+) 
   
 
 ```
@@ -62,48 +75,78 @@ Cleanup the ordered categories to be numeric here
 # so we code the data in that way
 # The importance_weights column will be used later in the script
 dat <- dat_raw %>%
-  mutate(class_n = Class == "recurrence-events",
-         Class = factor(Class, levels = c("recurrence-events", "no-recurrence-events")),
-         age_f = factor(age, ordered = T),
-         tumor_size_f = factor(tumor_size,
-                               ordered = T, 
-                               levels = c("0-4", "5-9", "10-14", "15-19",
-                                          "20-24", "25-29", "30-34", "35-39", 
-                                          "40-44", "45-49",  "50-54")),
-         inv_nodes_f = factor(inv_nodes, 
-                              ordered = T,
-                              levels = c("0-2", "3-5", "6-8", "9-11", "12-14", "15-17", "24-26")),
-         irradiat_n = irradiat == "yes",
-         node_caps_n = node_caps == "yes",
-         breast_left = breast == "left",
-         case_weight = importance_weights(if_else(class_n == 0, 1, 201/85))
+  mutate(
+    # define logical variable for whether subject had 
+    # recurrence events (TRUE) or not (FALSE)
+    class_n = Class == "recurrence-events",
+    # define Class as a factor with levels that match class_n, 
+    # so recurrence_events is factor level 1
+    Class = factor(Class, 
+                   levels = c("recurrence-events", "no-recurrence-events")),
+    # define age as an ordered factor
+    age_f = factor(age, ordered = TRUE),
+    # define tumor size as an ordered factor with specified levels
+    tumor_size_f = factor(tumor_size,
+                          ordered = TRUE, 
+                          levels = c("0-4", "5-9", "10-14", "15-19",
+                                     "20-24", "25-29", "30-34", "35-39", 
+                                     "40-44", "45-49",  "50-54")),
+    # define nodes as an ordered factor with specified levels
+    inv_nodes_f = factor(inv_nodes, 
+                         ordered = TRUE,
+                         levels = c("0-2", "3-5", "6-8", "9-11", 
+                                    "12-14", "15-17", "24-26")),
+    # define logical variable for whether subject receieved radiation (TRUE)
+    # or not (FALSE)
+    irradiat_n = irradiat == "yes",
+    # define logical variable for whether node caps were used (TRUE) 
+    # or not (FALSE)
+    node_caps_n = node_caps == "yes",
+    # define logical variable for whether tumor was in left brease (TRUE)
+    # or not (FALSE)
+    breast_left = breast == "left",
+    # define importance weights
+    # TODO(matthew): Can we comment on how these are defined/chosen?
+    case_weight = importance_weights(if_else(class_n == 0, 1, 201/85))
   )
 
 # Create the training/testing split with the tidymodels package
-init_split <- initial_split(dat)
+# will use default proportion for 75% (3/4) training, 25% testing
+init_split <- initial_split(dat, prop = 3/4)
 ```
 
 
-Create the formatted datasets for training and testing in a format for xgboost, which is a matrix. 
-Also, the recipes package is used to preprocess categorical and ordinal covariates into numerics for xgboost.
+Create the formatted datasets for training and testing in a format for **xgboost**, which is a matrix. 
+Also, the **recipes** package is used to preprocess categorical and ordinal covariates into numerics for **xgboost**.
 
 ```{R}
 
 # This is like specifying a model, but for data pre-proecessing 
-recipe_xgboost <- recipes::recipe(class_n ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + deg_malig + breast_left + breast_quad + irradiat_n, 
-                data = training(init_split)) %>%
+model_formula <- as.formula(
+  class_n ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
+            deg_malig + breast_left + breast_quad + irradiat_n
+)
+recipe_xgboost <- recipes::recipe(
+  model_formula, 
+  data = training(init_split)) %>%
   step_ordinalscore(age_f, tumor_size_f, inv_nodes_f) %>%
-  step_dummy(breast_quad, menopause, one_hot = T)
+  step_dummy(breast_quad, menopause, one_hot = TRUE)
 
 # This is like fitting the model 
 estimated_preprocessing <- prep(recipe_xgboost, training(init_split))
 
 # This is like using the model to make predictions
-x_train <- bake(estimated_preprocessing, training(init_split)) %>% select(-class_n) %>% as.matrix()
-y_train <- bake(estimated_preprocessing, training(init_split)) %>% pull(class_n) 
+x_train <- bake(estimated_preprocessing, training(init_split)) %>% 
+  select(-class_n) %>% 
+  as.matrix()
+y_train <- bake(estimated_preprocessing, training(init_split)) %>%
+  pull(class_n) 
 
-x_test <- bake(estimated_preprocessing, testing(init_split)) %>% select(-class_n) %>% as.matrix()
-y_test <- bake(estimated_preprocessing, testing(init_split)) %>% pull(class_n) 
+x_test <- bake(estimated_preprocessing, testing(init_split)) %>% 
+  select(-class_n) %>% 
+  as.matrix()
+y_test <- bake(estimated_preprocessing, testing(init_split)) %>% 
+  pull(class_n) 
 
 ```
 
@@ -114,9 +157,7 @@ Fit the model with default tuning parameters.
 fit1 <- xgboost::xgboost(data = x_train, 
                          label = y_train,
                          nrounds = 15,
-                         params = list(
-                           objective = "binary:logistic"
-                         ))
+                         params = list(objective = "binary:logistic"))
 
 ```
 
@@ -136,10 +177,15 @@ predictions %>%
 # Confusion matrix for predictions
 predictions %>%
   mutate(truth = Class,
-         pred = factor(if_else(pred_pr >= 0.5, "no-recurrence-events", "recurrence-events", ),  levels = c("recurrence-events", "no-recurrence-events"))) %>%
+         pred = factor(if_else(pred_pr >= 0.5,
+                               "no-recurrence-events", 
+                               "recurrence-events", ), 
+                       levels = c("recurrence-events", 
+                                  "no-recurrence-events"))) %>%
   yardstick::conf_mat(estimate = pred, truth = truth)
 
-# The yardstick package has many functions to evaluate (and plot evaluation) of models, and works in the tidymodels package
+# The yardstick package has many functions to evaluate (and plot evaluation) 
+# of models, and works in the tidymodels package
 
 ```
 
@@ -154,7 +200,7 @@ Source: https://juliasilge.com/blog/xgboost-tune-volleyball/
 # Also, for simplification of code, we'll just impute missing values
 # Even though in the previous example xgboost cleanly handles them 
 recipe_xgboost_tidymodels <- recipes::recipe(
-  Class ~age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
+  Class ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
     deg_malig + breast_left + breast_quad + irradiat_n, 
                 data = training(init_split)) %>%
   step_impute_mode(all_nominal_predictors()) %>%
