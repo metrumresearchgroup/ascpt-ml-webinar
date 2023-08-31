@@ -272,7 +272,10 @@ final_fit %>%
     collect_predictions() %>% 
     pr_auc(Class, `.pred_recurrence-events`, event_level = "first")
 
-
+# We can look at the sequence of trees fit by xgboost for the final model
+# Here's the first one
+# This is output in the Rstudio viewer
+xgboost::xgb.plot.tree(model = extract_fit_parsnip(final_fit)$fit, trees = 0)
 ```
 
 ## Also, something about imbalanced classes
