@@ -75,6 +75,8 @@ Cleanup the ordered categories to be numeric here
 # so we code the data in that way
 # The importance_weights column will be used later in the script
 dat <- dat_raw %>%
+  # TODO:(andrew, matthew) drop any rows where a variable is NA?
+  # drop_na() %>%
   mutate(
     # define logical variable for whether subject had 
     # recurrence events (TRUE) or not (FALSE)
@@ -128,14 +130,25 @@ model_formula <- as.formula(
 )
 recipe_xgboost <- recipes::recipe(
   model_formula, 
+  # call the training portion of the split data set using training()
+  # extraction function
   data = training(init_split)) %>%
+  # convert the ordinal factors into numeric scores (e.g., 0, 1, 2)
   step_ordinalscore(age_f, tumor_size_f, inv_nodes_f) %>%
+  # create dummy variables non-reference levels of factors, the one_hot = TRUE
+  # option tells the function to assume a reference level and then make
+  # numerics for the other levels. For example, if you have N levels, then
+  # N-1 dummy variables are created.
   step_dummy(breast_quad, menopause, one_hot = TRUE)
 
 # This is like fitting the model 
+# TODO(matthew): Why does the data have to be specified here and in the
+#   recipe? Same question for below.
 estimated_preprocessing <- prep(recipe_xgboost, training(init_split))
 
 # This is like using the model to make predictions
+# TODO(matthew): I'm confused by the comment above. Isn't this just pulling
+#   out the design matrix and responses for training and test?
 x_train <- bake(estimated_preprocessing, training(init_split)) %>% 
   select(-class_n) %>% 
   as.matrix()
@@ -169,7 +182,9 @@ Evaluate fit
 predictions <- testing(init_split) %>%
   mutate(pred_pr = predict(fit1, x_test))
 
-# ROC curves are a common way to assess a binary prediction
+# AUC (area under the ROC curve) is a common way to assess a binary prediction
+# 0.5 = model no better than a random classifier; the closer AUC gets to 
+# 1 (a perfect classifier), the better the model
 predictions %>%
   mutate(truth = Class) %>%
   roc_auc(pred_pr, truth = truth, estimator = "binary", event_level = "first")
