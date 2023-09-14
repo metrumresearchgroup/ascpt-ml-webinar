@@ -173,13 +173,13 @@ bake(estimated_preprocessing2, training(init_split))
 # Also, note the tuning parameter names are slightly different in tidymodels
 # compared to xgboost
 xgb_spec_all <- boost_tree(
-  trees = 1000,
-  tree_depth = tune(),
-  min_n = tune(),
-  loss_reduction = tune(),        
-  sample_size = tune(), 
-  mtry = tune(),        
-  learn_rate = tune()      
+  trees = 1000,   # Number of trees in ensemble
+  tree_depth = tune(),      # Max depth of the tree (number of splits) 
+  min_n = tune(),    # Min number of data points in a node that is required for the node to be split further
+  loss_reduction = tune(),    # Number for reduction in loss function required to split further    
+  sample_size = tune(), # Proportion of data exposed to fitting routine
+  mtry = tune(),     # Proportion of predictors randomly sampled at each split when creating tree models    
+  learn_rate = tune()      # Step size
 ) %>%
   set_engine("xgboost") %>%
   set_mode("classification")
@@ -199,10 +199,11 @@ xgb_spec <- boost_tree(
 
 # One way to select the points to tune
 # See the help/google for more details
+# Fitting 50 points for tree_depth and min_n in a random grid for hyperparameter tuning
 xgb_grid <- grid_latin_hypercube(
   tree_depth(),
   min_n(),
-  size = 50
+  size = 50 
 )
 
 # Combine preprocessing and fitting into a "workflow"
@@ -213,7 +214,7 @@ xgb_wf <- workflow() %>%
 # Set up cross-validation  
 cv_folds <- vfold_cv(training(init_split), v = 5)
 
-set.seed(1234)
+set.seed(1234) # setting random seed to eliminate stochastic behavior of model
 
 # Question: How many models do we have to fit?
 
