@@ -59,7 +59,7 @@ Cleanup the ordered categories to be numeric here
 # Further preprocessing, using tidyverse
 # Trees naturally handle ordered factors (categorical) covariates,
 # so we code the data in that way
-# The importance_weights column will be used later in the script
+# The importance_weights column will be used later in the script, and is the (common class)/(rare class)
 dat <- dat_raw %>%
   mutate(class_n = Class == "recurrence-events",
          Class = factor(Class, levels = c("recurrence-events", "no-recurrence-events")),
@@ -89,19 +89,21 @@ Also, the recipes package is used to preprocess categorical and ordinal covariat
 ```{R}
 
 # This is like specifying a model, but for data pre-proecessing 
-recipe_xgboost <- recipes::recipe(class_n ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + deg_malig + breast_left + breast_quad + irradiat_n, 
+recipe_xgboost <- recipes::recipe(class_n ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps + deg_malig + breast + breast_quad + irradiat, 
                 data = training(init_split)) %>%
   step_ordinalscore(age_f, tumor_size_f, inv_nodes_f) %>%
-  step_dummy(breast_quad, menopause, one_hot = T)
+  step_dummy(breast, breast_quad, irradiat, menopause, node_caps, one_hot = T)
 
 # This is like fitting the model 
 estimated_preprocessing <- prep(recipe_xgboost, training(init_split))
 
 # This is like using the model to make predictions
-x_train <- bake(estimated_preprocessing, training(init_split)) %>% select(-class_n) %>% as.matrix()
+# There will be warnings about new factor levels, in this case for xgboost we can ignore them
+# Also, y is a logical vector, so the "pull" function is used
+x_train <- bake(estimated_preprocessing, training(init_split), -class_n, composition = "matrix")
 y_train <- bake(estimated_preprocessing, training(init_split)) %>% pull(class_n) 
 
-x_test <- bake(estimated_preprocessing, testing(init_split)) %>% select(-class_n) %>% as.matrix()
+x_test <- bake(estimated_preprocessing, testing(init_split), -class_n, composition = "matrix")
 y_test <- bake(estimated_preprocessing, testing(init_split)) %>% pull(class_n) 
 
 ```
@@ -153,14 +155,14 @@ Source: https://juliasilge.com/blog/xgboost-tune-volleyball/
 # Also, for simplification of code, we'll just impute missing values
 # Even though in the previous example xgboost cleanly handles them 
 recipe_xgboost_tidymodels <- recipes::recipe(
-  Class ~age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
+  Class ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
     deg_malig + breast_left + breast_quad + irradiat_n, 
                 data = training(init_split)) %>%
   step_impute_mode(all_nominal_predictors()) %>%
   step_impute_mean(all_numeric_predictors()) %>%
   step_ordinalscore(age_f, tumor_size_f, inv_nodes_f) %>%
   step_mutate(node_caps_n = as.numeric(node_caps_n), 
-              breast_left = as.numeric(breast_left), 
+              breast_left_n = as.numeric(breast_left), 
               irradiat_n = as.numeric(irradiat_n)) %>%
   step_dummy(breast_quad, menopause, one_hot = T) 
   
@@ -277,7 +279,7 @@ final_fit %>%
 xgboost::xgb.plot.tree(model = extract_fit_parsnip(final_fit)$fit, trees = 0)
 ```
 
-## Also, something about imbalanced classes
+## Imbalanced Classes
 
 ```{R}
 
