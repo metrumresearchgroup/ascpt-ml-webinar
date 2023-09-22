@@ -76,6 +76,9 @@ Cleanup the ordered categories to be numeric here
 # The importance_weights column will be used later in the script
 dat <- dat_raw %>%
   # TODO:(andrew, matthew) drop any rows where a variable is NA?
+  #     : Sounds like we want to keep this in. But we should probably
+  #     : be ready to discuss this with participants, i.e., what is
+  #     : XGBoost doing with missing data.
   # drop_na() %>%
   mutate(
     # define logical variable for whether subject had 
@@ -166,10 +169,16 @@ y_test <- bake(estimated_preprocessing, testing(init_split)) %>%
 Fit the model with default tuning parameters. 
 
 ```{R}
-
-fit1 <- xgboost::xgboost(data = x_train, 
-                         label = y_train,
-                         nrounds = 15,
+# Fit the model, specifying that we are doing binary classification and thus
+# want to "score" models to minimized their logistic loss. Note that
+# this is not specifying logistic regression, rather specifying that the loss
+# function to be minimized is logistic.
+fit1 <- xgboost::xgboost(data = x_train,  # predictors
+                         label = y_train, # responses
+                         # nrounds: number of boosted trees to add to ensemble
+                         #          can be tuned, but fixed here for demo
+                         nrounds = 15,  
+                         # see note above about logistic loss function
                          params = list(objective = "binary:logistic"))
 
 ```
@@ -178,7 +187,8 @@ Evaluate fit
 
 ```{R}
 
-# Using the test set here, which was not used to fit the model
+# Using the test set here, which was not used to fit the model, meaning
+# this is out-of-sample validation/prediction
 predictions <- testing(init_split) %>%
   mutate(pred_pr = predict(fit1, x_test))
 
@@ -211,6 +221,7 @@ predictions %>%
 Source: https://juliasilge.com/blog/xgboost-tune-volleyball/
 ```{R}
 
+# TODO(matthew): What is getting changed here besides imputation?
 # Slightly tweak the formatting of the dataset for tidymodels format
 # Also, for simplification of code, we'll just impute missing values
 # Even though in the previous example xgboost cleanly handles them 
@@ -321,17 +332,27 @@ final_fit %>%
 # Question: Is this accuracy good for this dataset? What accuracy would a very naive algorithm have? 
 
 # Answer: Well a model always predicting no events would have approx 70% accuracy
+# SUGGESTION: Have participants generate confusion matrix corresponding the
+# naive model of no events. Not modeling per se, but I think is important
+# for building intuition around the topic.
 
 # Question: What about focusing on the patients with recurrence-events? What are alternatives to ROC in the yardstick package for calculating an AUC?
 
+# TODO: need to provide intuition for the PR curve? not as common as ROC
 final_fit %>%
   collect_predictions() %>% 
+  # set event_level = "first" because our event of interest is the 
+  # `no-recurrence-event` factor level of Class, which is the first
+  # level in Class.
   pr_curve(Class, `.pred_recurrence-events`, event_level = "first") %>% 
   autoplot()
 
 final_fit %>%
-    collect_predictions() %>% 
-    pr_auc(Class, `.pred_recurrence-events`, event_level = "first")
+  collect_predictions() %>% 
+  # set event_level = "first" because our event of interest is the 
+  # `no-recurrence-event` factor level of Class, which is the first
+  # level in Class.
+  pr_auc(Class, `.pred_recurrence-events`, event_level = "first")
 
 
 ```
@@ -367,7 +388,10 @@ tuning_results_weights <- tune_grid(
 
 collect_metrics(tuning_results_weights)
 
+# FIXME: getting error about checking value of `metric` b/c pr_auc
+#        not in the metrics.
 best_auc_weighted <- select_best(tuning_results_weights, "pr_auc")
+
 
 
 # Create the final model, with actual values for the hyperparameters 
