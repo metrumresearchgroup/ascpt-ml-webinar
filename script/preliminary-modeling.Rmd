@@ -101,11 +101,10 @@ dat <- dat_raw %>%
     # define logical variable for whether node caps were used (TRUE) 
     # or not (FALSE)
     node_caps_n = node_caps == "yes",
-    # define logical variable for whether tumor was in left brease (TRUE)
+    # define logical variable for whether tumor was in left breast (TRUE)
     # or not (FALSE)
     breast_left = breast == "left",
-    # define importance weights
-    # TODO(matthew): Can we comment on how these are defined/chosen?
+    # define importance weights of the rare as the ratio of the common to rare classes
     case_weight = importance_weights(if_else(class_n == 0, 1, 201/85))
   )
 
@@ -202,6 +201,9 @@ predictions %>%
 
 # The yardstick package has many functions to evaluate (and plot evaluation) 
 # of models, and works in the tidymodels package
+# Try looking into some of them, and compare which ones make sense for
+# a classification model.
+# Hint: yardstick:: will auto-complete to what functions are available in the package
 
 ```
 
@@ -237,6 +239,7 @@ bake(estimated_preprocessing2, training(init_split))
 # But this isn't the most practical approach (curse of dimensionality)
 # Also, note the tuning parameter names are slightly different in tidymodels
 # compared to xgboost
+# See the help function for explanation of the different arguments
 xgb_spec_all <- boost_tree(
   trees = 1000,
   tree_depth = tune(),
@@ -250,7 +253,7 @@ xgb_spec_all <- boost_tree(
   set_mode("classification")
 
 
-# Here's a more limited set of parameters to tune
+# Here's a more limited and realistic set of parameters to tune
 xgb_spec <- boost_tree(
   trees = 15,
   tree_depth = tune(),
@@ -276,6 +279,7 @@ xgb_wf <- workflow() %>%
   add_model(xgb_spec)
 
 # Set up cross-validation  
+# 5 folds are used since to reflect amount of data
 cv_folds <- vfold_cv(training(init_split), v = 5)
 
 set.seed(1234)
