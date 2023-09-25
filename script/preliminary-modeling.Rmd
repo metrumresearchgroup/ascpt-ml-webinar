@@ -9,13 +9,12 @@ editor_options:
 
 # Setup
 
-
-
 Load libraries and set up file paths.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+#load libraries 
 library(tidyverse)
 library(tidymodels)
 library(xgboost)
@@ -73,13 +72,8 @@ Cleanup the ordered categories to be numeric here
 # Further preprocessing, using tidyverse
 # Trees naturally handle ordered factors (categorical) covariates,
 # so we code the data in that way
-# The importance_weights column will be used later in the script
+# The importance_weights column will be used later in the script, and is the (common class)/(rare class)
 dat <- dat_raw %>%
-  # TODO:(andrew, matthew) drop any rows where a variable is NA?
-  #     : Sounds like we want to keep this in. But we should probably
-  #     : be ready to discuss this with participants, i.e., what is
-  #     : XGBoost doing with missing data.
-  # drop_na() %>%
   mutate(
     # define logical variable for whether subject had 
     # recurrence events (TRUE) or not (FALSE)
@@ -127,11 +121,12 @@ Also, the **recipes** package is used to preprocess categorical and ordinal cova
 ```{R}
 
 # This is like specifying a model, but for data pre-proecessing 
-model_formula <- as.formula(
+# The data specification here just gives a template of the data for the transformations
+preprocessing_formula <- as.formula(
   class_n ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
             deg_malig + breast_left + breast_quad + irradiat_n
 )
-recipe_xgboost <- recipes::recipe(
+preprocessing_xgboost <- recipes::recipe(
   model_formula, 
   # call the training portion of the split data set using training()
   # extraction function
@@ -142,27 +137,23 @@ recipe_xgboost <- recipes::recipe(
   # option tells the function to assume a reference level and then make
   # numerics for the other levels. For example, if you have N levels, then
   # N-1 dummy variables are created.
-  step_dummy(breast_quad, menopause, one_hot = TRUE)
+  step_dummy(breast, breast_quad, irradiat, menopause, node_caps, one_hot = T)
+
 
 # This is like fitting the model 
-# TODO(matthew): Why does the data have to be specified here and in the
-#   recipe? Same question for below.
+# The training set is specified because we want to learn the transformations
+# on the training set only to avoid leaking any data from the test set
 estimated_preprocessing <- prep(recipe_xgboost, training(init_split))
 
-# This is like using the model to make predictions
-# TODO(matthew): I'm confused by the comment above. Isn't this just pulling
-#   out the design matrix and responses for training and test?
-x_train <- bake(estimated_preprocessing, training(init_split)) %>% 
-  select(-class_n) %>% 
-  as.matrix()
-y_train <- bake(estimated_preprocessing, training(init_split)) %>%
-  pull(class_n) 
+# This is like using the model to make predictions, 
+# by applying the learned transformations to the datasets (training and testing)
+# There will be warnings about new factor levels, in this case for xgboost we can ignore them
+# Also, y is a logical vector, so the "pull" function is used
+x_train <- bake(estimated_preprocessing, training(init_split), -class_n, composition = "matrix")
+y_train <- bake(estimated_preprocessing, training(init_split)) %>% pull(class_n) 
 
-x_test <- bake(estimated_preprocessing, testing(init_split)) %>% 
-  select(-class_n) %>% 
-  as.matrix()
-y_test <- bake(estimated_preprocessing, testing(init_split)) %>% 
-  pull(class_n) 
+x_test <- bake(estimated_preprocessing, testing(init_split), -class_n, composition = "matrix")
+y_test <- bake(estimated_preprocessing, testing(init_split)) %>% pull(class_n) 
 
 ```
 
@@ -233,7 +224,7 @@ recipe_xgboost_tidymodels <- recipes::recipe(
   step_impute_mean(all_numeric_predictors()) %>%
   step_ordinalscore(age_f, tumor_size_f, inv_nodes_f) %>%
   step_mutate(node_caps_n = as.numeric(node_caps_n), 
-              breast_left = as.numeric(breast_left), 
+              breast_left_n = as.numeric(breast_left), 
               irradiat_n = as.numeric(irradiat_n)) %>%
   step_dummy(breast_quad, menopause, one_hot = T) 
   
@@ -354,10 +345,13 @@ final_fit %>%
   # level in Class.
   pr_auc(Class, `.pred_recurrence-events`, event_level = "first")
 
-
+# We can look at the sequence of trees fit by xgboost for the final model
+# Here's the first one
+# This is output in the Rstudio viewer
+xgboost::xgb.plot.tree(model = extract_fit_parsnip(final_fit)$fit, trees = 0)
 ```
 
-## Also, something about imbalanced classes
+## Imbalanced Classes
 
 ```{R}
 
