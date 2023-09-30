@@ -122,11 +122,11 @@ Also, the **recipes** package is used to preprocess categorical and ordinal cova
 # This is like specifying a model, but for data pre-proecessing 
 # The data specification here just gives a template of the data for the transformations
 preprocessing_formula <- as.formula(
-  class_n ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
-            deg_malig + breast_left + breast_quad + irradiat_n
+  class_n ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps + 
+            deg_malig + breast + breast_quad + irradiat
 )
 preprocessing_xgboost <- recipes::recipe(
-  model_formula, 
+  preprocessing_formula, 
   # call the training portion of the split data set using training()
   # extraction function
   data = training(init_split)) %>%
@@ -142,7 +142,7 @@ preprocessing_xgboost <- recipes::recipe(
 # This is like fitting the model 
 # The training set is specified because we want to learn the transformations
 # on the training set only to avoid leaking any data from the test set
-estimated_preprocessing <- prep(recipe_xgboost, training(init_split))
+estimated_preprocessing <- prep(preprocessing_xgboost, training(init_split))
 
 # This is like using the model to make predictions, 
 # by applying the learned transformations to the datasets (training and testing)
@@ -219,16 +219,13 @@ Source: https://juliasilge.com/blog/xgboost-tune-volleyball/
 # Also, for simplification of code, we'll just impute missing values
 # Even though in the previous example xgboost cleanly handles them 
 recipe_xgboost_tidymodels <- recipes::recipe(
-  Class ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
-    deg_malig + breast_left + breast_quad + irradiat_n, 
+  Class ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps + 
+    deg_malig + breast + breast_quad + irradiat, 
                 data = training(init_split)) %>%
   step_impute_mode(all_nominal_predictors()) %>%
   step_impute_mean(all_numeric_predictors()) %>%
   step_ordinalscore(age_f, tumor_size_f, inv_nodes_f) %>%
-  step_mutate(node_caps_n = as.numeric(node_caps_n), 
-              breast_left_n = as.numeric(breast_left), 
-              irradiat_n = as.numeric(irradiat_n)) %>%
-  step_dummy(breast_quad, menopause, one_hot = T) 
+  step_dummy(breast, breast_quad, irradiat, menopause, node_caps, one_hot = T) 
   
 # Using the recipes again
 estimated_preprocessing2 <- prep(recipe_xgboost_tidymodels, training(init_split))
@@ -265,7 +262,7 @@ xgb_spec <- boost_tree(
   set_engine("xgboost") %>%
   set_mode("classification")
 
-# One way to select the points to tune
+# One way to select the grid of points to tune
 # See the help/google for more details
 xgb_grid <- grid_latin_hypercube(
   tree_depth(),
@@ -274,12 +271,13 @@ xgb_grid <- grid_latin_hypercube(
 )
 
 # Combine preprocessing and fitting into a "workflow"
+# This helps manage different preprocessing steps and models
 xgb_wf <- workflow() %>%
   add_recipe(recipe_xgboost_tidymodels) %>%
   add_model(xgb_spec)
 
 # Set up cross-validation  
-# 5 folds are used since to reflect amount of data
+# 5 folds are used to reflect amount of data
 cv_folds <- vfold_cv(training(init_split), v = 5)
 
 set.seed(1234)
@@ -353,6 +351,8 @@ final_fit %>%
 # Here's the first one
 # This is output in the Rstudio viewer
 xgboost::xgb.plot.tree(model = extract_fit_parsnip(final_fit)$fit, trees = 0)
+
+# EXERCISE: Output the first 3 trees
 ```
 
 ## Imbalanced Classes
@@ -362,17 +362,17 @@ xgboost::xgb.plot.tree(model = extract_fit_parsnip(final_fit)$fit, trees = 0)
 set.seed(12345)
 
 recipe_xgboost_tidymodels_weights <- recipes::recipe(
-  Class ~age_f + menopause + tumor_size_f + inv_nodes_f + node_caps_n + 
-    deg_malig + breast_left + breast_quad + irradiat_n + case_weight, 
+  Class ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps + 
+    deg_malig + breast + breast_quad + irradiat +
+    case_weight, 
                 data = training(init_split)) %>%
   step_impute_mode(all_nominal_predictors()) %>%
   step_impute_mean(all_numeric_predictors()) %>%
   step_ordinalscore(age_f, tumor_size_f, inv_nodes_f) %>%
-  step_mutate(node_caps_n = as.numeric(node_caps_n), 
-              breast_left = as.numeric(breast_left), 
-              irradiat_n = as.numeric(irradiat_n)) %>%
-  step_dummy(breast_quad, menopause, one_hot = T) 
+  step_dummy(breast, breast_quad, irradiat, menopause, node_caps, one_hot = T) 
 
+# Using the update function for slightly different models
+# reduces the copy-pasting of code
 xgb_wf_weights <- xgb_wf %>%
   update_recipe(recipe_xgboost_tidymodels_weights) %>%
   add_case_weights(case_weight)
@@ -381,15 +381,13 @@ tuning_results_weights <- tune_grid(
   xgb_wf_weights,
   resamples = cv_folds,
   grid = xgb_grid,
+  metrics = metric_set(pr_auc),
   control = control_grid(save_pred = TRUE, verbose = TRUE,  event_level = "first")
 )
 
 collect_metrics(tuning_results_weights)
 
-# FIXME: getting error about checking value of `metric` b/c pr_auc
-#        not in the metrics.
-best_auc_weighted <- select_best(tuning_results_weights, "pr_auc")
-
+best_auc_weighted <- select_best(tuning_results_weights, metric = "pr_auc")
 
 
 # Create the final model, with actual values for the hyperparameters 
@@ -424,6 +422,7 @@ final_fit_weighted %>%
 
 # Note the shapley values are for predicting the first class in the Class factor, which is no recurrence events
 # Always good to pay attention to how R and libraries are using factor orderings
+# The test data is used, in case the model was overfit
 shap_plot <- xgb.ggplot.shap.summary(data = bake(extract_recipe(final_fit), testing(init_split)) %>% select(-Class) %>% as.matrix(),
                         model = extract_fit_parsnip(final_fit)$fit) +
   labs(x = "Shapley Value", color = "Feature Value") 
@@ -434,7 +433,7 @@ shap_plot
 
 ```
 
-Sanity check the shapley predictions by making predictions for two different values of tumor sizes for one set of covariate values
+Sanity check the shapley predictions by making predictions for two different values of tumor sizes for one set of covariate values. This is analagous to plotting the predictions for a reference individual and permuting the one covariate.
 
 ```{R}
 
