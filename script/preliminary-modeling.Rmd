@@ -105,7 +105,9 @@ dat <- dat_raw %>%
     # or not (FALSE)
     breast_left = breast == "left",
     # define importance weights of the rare as the ratio of the common to rare classes
-    case_weight = importance_weights(if_else(class_n == 0, 1, 201/85))
+    # from the parsnip package
+    # This is a new feature, so if you have an older version of R (<4.0), comment this out
+    case_weight = parsnip::importance_weights(if_else(class_n == 0, 1, 201/85))
   )
 
 # Create the training/testing split with the tidymodels package
@@ -364,7 +366,7 @@ Modeling situations where one class of data we're trying to make predictions for
 
 ```{R}
 
-set.seed(12345)
+set.seed(1234)
 
 # This recipe includes the pre-computed weights (case_weight) in the formula 
 recipe_xgboost_tidymodels_weights <- recipes::recipe(
@@ -393,6 +395,8 @@ tuning_results_weights <- tune_grid(
 )
 
 # We're using the precision-recall AUC
+# because we care more about identifying the 
+# patients with recurrence events
 collect_metrics(tuning_results_weights)
 
 # Use the precision-recall AUC to pick the best model
@@ -409,18 +413,21 @@ final_wf_weighted <- finalize_workflow(
 final_fit_weighted <- final_wf_weighted %>%
   last_fit(init_split) 
 
-# Precision-recall curve
+# TODO: Precision-recall curve
+# Remove this for exercise
 final_fit_weighted %>%
   collect_predictions() %>% 
   pr_curve(Class, `.pred_recurrence-events`, event_level = "first") %>% 
   autoplot()
 
-# Precision-recall AUC
+# TODO:Precision-recall AUC
+# Remove this for exercise
 final_fit_weighted %>%
     collect_predictions() %>% 
     pr_auc(Class, `.pred_recurrence-events`, event_level = "first")
 
-# Compare this ROC AUC with the previous model.
+# TODO: Compare this ROC AUC with the previous model.
+# Remove this for exercise
 final_fit_weighted %>%
     collect_predictions() %>% 
     roc_auc(Class, `.pred_recurrence-events`, event_level = "first")
@@ -433,7 +440,7 @@ final_fit_weighted %>%
 
 ## Model interpretation with Shapley Values
 
-
+Shapley values are one strategy for interpreting ML models. For tree-based models (e.g., xgboost, random forests) they are especially computationally efficent. The intuition is to recover a set of additive "forces" that explain the difference between the prediction of a given data point and the mean prediction, by assigning an effect to each feature (covariate), which add up to that difference. 
 
 Here's two moderately technical references for shapley valyes and SHAP: https://christophm.github.io/interpretable-ml-book/shap.html and https://shap.readthedocs.io/en/latest/example_notebooks/overviews/An%20introduction%20to%20explainable%20AI%20with%20Shapley%20values.html
 
@@ -450,10 +457,21 @@ shap_plot <- xgb.ggplot.shap.summary(data = shapley_input_data,
                         model = extract_fit_parsnip(final_fit)$fit) +
   labs(x = "Shapley Value", color = "Feature Value") 
 
+
+# The plot uses the color to code the feature quantile,
+# the x-axis is the shapley value. 
+# Each point is one observation in the test set, 
+# and so each row on the graph has the same number of points
+# as data rows in the test set.
+
 shap_plot
 
+# There are additional ways to visualize shapley values and interactions with covariates,
+# but is beyond the scope of this webinar.
+# N.B. many of the libraries were developed first for Python, and then ported to R
+# e.g. fastshap
 
-
+# Question: What does the shapley plot look like using overfit model on the training vs testing sets?
 ```
 
 We also sanity check the shapley predictions by making predictions for two different values of tumor sizes for one set of covariate values. This is analogous to plotting the predictions for a reference individual and permuting the one covariate.
