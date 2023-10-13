@@ -105,7 +105,9 @@ dat <- dat_raw %>%
     # or not (FALSE)
     breast_left = breast == "left",
     # define importance weights of the rare as the ratio of the common to rare classes
-    case_weight = importance_weights(if_else(class_n == 0, 1, 201/85))
+    # from the parsnip package
+    # This is a new feature, so if you have an older version of R (<4.0), comment this out
+    case_weight = parsnip::importance_weights(if_else(class_n == 0, 1, 201/85))
   )
 
 # Create the training/testing split with the tidymodels package
@@ -331,7 +333,10 @@ final_fit %>%
 
 # Question: What about focusing on the patients with recurrence-events? What are alternatives to ROC in the yardstick package for calculating an AUC?
 
-# TODO: need to provide intuition for the PR curve? not as common as ROC
+# The precision-recall curve focuses on the prediction of one event type of interest. 
+# It is related to the ROC curve
+# For a given threshold, the precision is the rate of correct predictions of the class,
+# and the recall is the rate of all the class instances predicted.
 final_fit %>%
   collect_predictions() %>% 
   # set event_level = "first" because our event of interest is the 
@@ -357,10 +362,13 @@ xgboost::xgb.plot.tree(model = extract_fit_parsnip(final_fit)$fit, trees = 0)
 
 ## Imbalanced Classes
 
+Modeling situations where one class of data we're trying to make predictions for is happens rarely in the dataset. By default, every instance of the data is weighted the same, which means the algorithm will put more weight on correctly predicting the common class, and predictions of the rare class can be poor. One approach is to reweight the training data such that each class is equally weighted. 
+
 ```{R}
 
-set.seed(12345)
+set.seed(1234)
 
+# This recipe includes the pre-computed weights (case_weight) in the formula 
 recipe_xgboost_tidymodels_weights <- recipes::recipe(
   Class ~ age_f + menopause + tumor_size_f + inv_nodes_f + node_caps + 
     deg_malig + breast + breast_quad + irradiat +
@@ -377,16 +385,21 @@ xgb_wf_weights <- xgb_wf %>%
   update_recipe(recipe_xgboost_tidymodels_weights) %>%
   add_case_weights(case_weight)
 
+# As before, use cross validation to tune the model hyperparameters
 tuning_results_weights <- tune_grid(
   xgb_wf_weights,
   resamples = cv_folds,
   grid = xgb_grid,
-  metrics = metric_set(pr_auc),
+  metrics = metric_set(pr_auc), # Use precision-recall 
   control = control_grid(save_pred = TRUE, verbose = TRUE,  event_level = "first")
 )
 
+# We're using the precision-recall AUC
+# because we care more about identifying the 
+# patients with recurrence events
 collect_metrics(tuning_results_weights)
 
+# Use the precision-recall AUC to pick the best model
 best_auc_weighted <- select_best(tuning_results_weights, metric = "pr_auc")
 
 
@@ -396,26 +409,41 @@ final_wf_weighted <- finalize_workflow(
   best_auc_weighted
 )
 
+# As before, refit using the best hyperparameters
 final_fit_weighted <- final_wf_weighted %>%
   last_fit(init_split) 
 
+# TODO: Precision-recall curve
+# Remove this for exercise
 final_fit_weighted %>%
   collect_predictions() %>% 
   pr_curve(Class, `.pred_recurrence-events`, event_level = "first") %>% 
   autoplot()
 
+# TODO:Precision-recall AUC
+# Remove this for exercise
 final_fit_weighted %>%
     collect_predictions() %>% 
     pr_auc(Class, `.pred_recurrence-events`, event_level = "first")
 
-
+# TODO: Compare this ROC AUC with the previous model.
+# Remove this for exercise
 final_fit_weighted %>%
     collect_predictions() %>% 
     roc_auc(Class, `.pred_recurrence-events`, event_level = "first")
+
+# Question: How has using the class weights changed each of the performance metrics
+# (ROC AUC, PR AUC, Accuracy)
+# Consider how the goals of the model inform these choices
 ```
 
 
 ## Model interpretation with Shapley Values
+
+Shapley values are one strategy for interpreting ML models. For tree-based models (e.g., xgboost, random forests) they are especially computationally efficent. The intuition is to recover a set of additive "forces" that explain the difference between the prediction of a given data point and the mean prediction, by assigning an effect to each feature (covariate), which add up to that difference. 
+
+Here's two moderately technical references for shapley valyes and SHAP: https://christophm.github.io/interpretable-ml-book/shap.html and https://shap.readthedocs.io/en/latest/example_notebooks/overviews/An%20introduction%20to%20explainable%20AI%20with%20Shapley%20values.html
+
 
 
 ```{R}
@@ -423,17 +451,30 @@ final_fit_weighted %>%
 # Note the shapley values are for predicting the first class in the Class factor, which is no recurrence events
 # Always good to pay attention to how R and libraries are using factor orderings
 # The test data is used, in case the model was overfit
-shap_plot <- xgb.ggplot.shap.summary(data = bake(extract_recipe(final_fit), testing(init_split)) %>% select(-Class) %>% as.matrix(),
+shapley_input_data <- bake(extract_recipe(final_fit), testing(init_split)) %>% select(-Class) %>% as.matrix()
+
+shap_plot <- xgb.ggplot.shap.summary(data = shapley_input_data,
                         model = extract_fit_parsnip(final_fit)$fit) +
   labs(x = "Shapley Value", color = "Feature Value") 
 
+
+# The plot uses the color to code the feature quantile,
+# the x-axis is the shapley value. 
+# Each point is one observation in the test set, 
+# and so each row on the graph has the same number of points
+# as data rows in the test set.
+
 shap_plot
 
+# There are additional ways to visualize shapley values and interactions with covariates,
+# but is beyond the scope of this webinar.
+# N.B. many of the libraries were developed first for Python, and then ported to R
+# e.g. fastshap
 
-
+# Question: What does the shapley plot look like using overfit model on the training vs testing sets?
 ```
 
-Sanity check the shapley predictions by making predictions for two different values of tumor sizes for one set of covariate values. This is analagous to plotting the predictions for a reference individual and permuting the one covariate.
+We also sanity check the shapley predictions by making predictions for two different values of tumor sizes for one set of covariate values. This is analogous to plotting the predictions for a reference individual and permuting the one covariate.
 
 ```{R}
 
