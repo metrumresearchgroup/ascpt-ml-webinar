@@ -26,7 +26,7 @@ library(xgboost)
 data_dir <- here::here("data", "source")
 ```
 
-Data source: https://archive.ics.uci.edu/ml/datasets/breast+cancer
+Data source: https://archive.ics.uci.edu/ml/datasets/breast+cancer. Class is the dependent variable, and the goal is to classify patients based on the other features (covariates). 
 
 ```{R}
 
@@ -69,6 +69,18 @@ Data description:
    9. breast-quad: left-up, left-low, right-up, right-low, central.
   10. irradiat: yes, no.
   
+Here's come additional (brief) descriptions of the data (Source: https://www.linkedin.com/pulse/using-machine-learning-techniques-predict-recurrence-breast-alva/). 
+
+Age: age of the patient at the time of diagnosis;
+Menopause: whether the patient is pre- or postmenopausal at time of diagnosis;
+Tumor size: the greatest diameter (in mm) of the excised tumor;
+Inv-nodes: the number (range 0 - 39) of axillary lymph nodes that contain metastatic breast cancer visible on histological examination;
+Node caps: if the cancer does metastasise to a lymph node, although outside the original site of the tumor it may remain “contained” by the capsule of the lymph node. However, over time, and with more aggressive disease, the tumor may replace the lymph node and then penetrate the capsule, allowing it to invade the surrounding tissues;
+Degree of malignancy: the histological grade (range 1-3) of the tumor. Tumors that are grade 1 predominantly consist of cells that, while neoplastic, retain many of their usual characteristics. Grade 3 tumors predominately consist of cells that are highly abnormal;
+Breast: breast cancer may obviously occur in either breast;
+Breast quadrant: the breast may be divided into four quadrants, using the nipple as a central point;
+Irradiation: radiation therapy is a treatment that uses high-energy x-rays to destroy cancer cells. 
+
   
 Cleanup the ordered categories to be numeric here  
 ```{R}
@@ -117,6 +129,10 @@ dat <- dat_raw %>%
 # Create the training/testing split with the tidymodels package
 # will use default proportion for 75% (3/4) training, 25% testing
 init_split <- initial_split(dat, prop = 3/4)
+
+# Come back here and try 80/20, or 66/33 splits
+# after fitting the model
+# How do the fits and evaluation change?
 ```
 
 # Fitting a model
@@ -170,17 +186,20 @@ Fit the model with default tuning parameters.
 # want to "score" models to minimized their logistic loss. Note that
 # this is not specifying logistic regression, rather specifying that the loss
 # function to be minimized is logistic.
-fit1 <- xgboost::xgboost(data = x_train,  # predictors
-                         label = y_train, # responses
+fit1 <- xgboost::xgboost(data = x_train,  # predictors # Make this a fill-in
+                         label = y_train, # responses  # Make this a fill-in
                          # nrounds: number of boosted trees to add to ensemble
                          #          can be tuned, but fixed here for demo
+                         # What happens if this increased? Try 30 or 100
                          nrounds = 15,  
                          # see note above about logistic loss function
                          params = list(objective = "binary:logistic"))
 
 ```
 
-Evaluating the fit
+Next, we evaluate the fit. 
+
+Wikipedia has a nice article (https://en.wikipedia.org/wiki/Sensitivity_and_specificity) explaining a lot of the terms.
 
 ```{R}
 
@@ -263,6 +282,14 @@ xgb_spec_all <- boost_tree(
 
 
 # Here's a more limited and realistic set of parameters to tune
+# We fix most of the parameters, and tune (with tune())
+# tree_depth and min_n
+
+# Try changing the fixed values or tuning other values
+# See the help function for suggested ranges
+# Also tune over the number of trees instead of tree depth.
+# What values seem to work well?
+# Alternatively, what values lead to bad results?
 xgb_spec <- boost_tree(
   trees = 15,
   tree_depth = tune(),
@@ -383,7 +410,7 @@ final_fit %>%
 # This is output in the Rstudio viewer
 xgboost::xgb.plot.tree(model = extract_fit_parsnip(final_fit)$fit, trees = 0)
 
-# EXERCISE: Output the first 3 trees
+# EXERCISE: Output the first 3 trees. How do you interpret this sequence of trees
 ```
 
 Model evaluation for binary endpoints is often challenging regardless of the modeling strategy. Here, we'll use a calibration table to assess the predicted probabilities versus observed probabilities across the range of the data. Think of this like a predicted vs. observed plot for continuous data. Calibration is the idea that if we predict a 70% probability for something, the event should in fact happen 70% of the time. In fact, tree-based models often have difficulty predicting on the extreme ranges of the data (why?),  but we don't really have enough data here to see that very well. Ideally, we'd create a lot of different buckets to assess calibration probability in, but there's only a moderate amount of data in the test set, so 4 are used here to illustrate the concept. 
@@ -399,7 +426,7 @@ final_fit %>%
             predicted = mean(`.pred_recurrence-events`))
 ```
 
-# Imbalanced Classes
+# Bonus Section: Imbalanced Classes
 
 Modeling situations where one class of data we're trying to make predictions for is happens rarely in the dataset. By default, every instance of the data is weighted the same, which means the algorithm will put more weight on correctly predicting the common class, and predictions of the rare class can be poor. One approach is to reweight the training data such that each class is equally weighted. 
 
@@ -477,7 +504,7 @@ final_fit_weighted %>%
 ```
 
 
-# Model interpretation with Shapley Values
+# Bonus Section: Model interpretation with Shapley Values
 
 Shapley values are one strategy for interpreting ML models. For tree-based models (e.g., xgboost, random forests) they are especially computationally efficent. The intuition is to recover a set of additive "forces" that explain the difference between the prediction of a given data point and the mean prediction, by assigning an effect to each feature (covariate), which add up to that difference. 
 
