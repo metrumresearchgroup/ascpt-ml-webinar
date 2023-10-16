@@ -11,6 +11,10 @@ editor_options:
 
 Load libraries and set up file paths.
 
+- The tidyverse framework is used for data manipulation
+- The tidymodels framework (https://www.tidymodels.org/) is used to manage models and the ML workflow
+- xgboost is the package we'll be using to fit the models
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
@@ -216,7 +220,6 @@ predictions %>%
 Source: https://juliasilge.com/blog/xgboost-tune-volleyball/
 ```{R}
 
-# TODO(matthew): What is getting changed here besides imputation?
 # Slightly tweak the formatting of the dataset for tidymodels format
 # Also, for simplification of code, we'll just impute missing values
 # Even though in the previous example xgboost cleanly handles them 
@@ -307,15 +310,18 @@ final_wf <- finalize_workflow(
   best_auc
 )
 
-# Some ways to examine the final fit
+# Re-fit the model using the best set of hyper-parameters found by the cross-validation
 final_fit <- final_wf %>%
   last_fit(init_split) 
 
+# Some common ways to examine the final fit
 final_fit %>%
   collect_predictions() %>% 
   roc_curve(Class, `.pred_recurrence-events`, event_level = "first") %>% 
   autoplot()
 
+# The ROC (receiver operating characteristic) assess the performance across the range of classification thresholds 
+# Question: what are reasons to not use 50% as the cutoff?
 final_fit %>%
     collect_predictions() %>% 
     roc_auc(Class, `.pred_recurrence-events`, event_level = "first")
@@ -327,9 +333,27 @@ final_fit %>%
 # Question: Is this accuracy good for this dataset? What accuracy would a very naive algorithm have? 
 
 # Answer: Well a model always predicting no events would have approx 70% accuracy
-# SUGGESTION: Have participants generate confusion matrix corresponding the
 # naive model of no events. Not modeling per se, but I think is important
 # for building intuition around the topic.
+
+# To help answer this, build a confusion matrix for this model and the null model (i.e. always predict no recurrence).
+# A confusion matrix is a 2x2 matrix:
+
+# True Positives | False Positive
+# ---------------|----------------
+# False Negative | True Negative
+
+# Remove This
+# Confusion matrix for the model
+final_fit %>%
+    collect_predictions() %>% 
+    conf_mat(Class, .pred_class)
+
+# Null model confusion matrix
+testing(init_split) %>%
+  mutate(null_model_prediction = first(Class[Class == "no-recurrence-events"])) %>%
+  conf_mat(truth = "Class", estimate = null_model_prediction)
+
 
 # Question: What about focusing on the patients with recurrence-events? What are alternatives to ROC in the yardstick package for calculating an AUC?
 
@@ -358,6 +382,19 @@ final_fit %>%
 xgboost::xgb.plot.tree(model = extract_fit_parsnip(final_fit)$fit, trees = 0)
 
 # EXERCISE: Output the first 3 trees
+```
+
+Model evaluation for binary endpoints is often challenging regardless of the modeling strategy. Here, we'll use a calibration table to assess the predicted probabilities versus observed probabilites across the range of the data. Think of this like a predicted vs. observed plot for continuous data. Calibration is the idea that if we predict a 70% probability for something, the event should in fact happen 70% of the time. In fact, tree-based models often have difficulty predicting on the extreme ranges of the data (why?),  but we don't really have enough data here to see that very well. Ideally, we'd create a lot of different buckets to assess calibration probability in, but there's only a moderate amount of data in the test set, so 4 are used here to illustrate the concept. 
+
+```{R}
+
+final_fit %>%
+  collect_predictions() %>% # Like the base R predict function
+  mutate(predicted_quartile = ntile(`.pred_recurrence-events`, 4)) %>% # Create the 4 buckets
+  group_by(predicted_quartile) %>%
+  summarise(n = n(), 
+            observed = mean(Class == "recurrence-events"),
+            predicted = mean(`.pred_recurrence-events`))
 ```
 
 ## Imbalanced Classes
@@ -438,7 +475,7 @@ final_fit_weighted %>%
 ```
 
 
-## Model interpretation with Shapley Values
+## BONUS CONTENT: Model interpretation with Shapley Values
 
 Shapley values are one strategy for interpreting ML models. For tree-based models (e.g., xgboost, random forests) they are especially computationally efficent. The intuition is to recover a set of additive "forces" that explain the difference between the prediction of a given data point and the mean prediction, by assigning an effect to each feature (covariate), which add up to that difference. 
 
