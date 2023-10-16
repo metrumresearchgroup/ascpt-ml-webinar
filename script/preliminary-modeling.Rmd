@@ -119,6 +119,7 @@ dat <- dat_raw %>%
 init_split <- initial_split(dat, prop = 3/4)
 ```
 
+# Fitting a model
 
 Create the formatted datasets for training and testing in a format for **xgboost**, which is a matrix. 
 Also, the **recipes** package is used to preprocess categorical and ordinal covariates into numerics for **xgboost**.
@@ -179,7 +180,7 @@ fit1 <- xgboost::xgboost(data = x_train,  # predictors
 
 ```
 
-Evaluate fit
+Evaluating the fit
 
 ```{R}
 
@@ -196,6 +197,11 @@ predictions %>%
   roc_auc(pred_pr, truth = truth, estimator = "binary", event_level = "first")
 
 # Confusion matrix for predictions
+# A confusion matrix is a 2x2 matrix:
+# True Positives | False Positive
+# ---------------|----------------
+# False Negative | True Negative
+
 predictions %>%
   mutate(truth = Class,
          pred = factor(if_else(pred_pr >= 0.5,
@@ -216,6 +222,7 @@ predictions %>%
 
 # Hyperparameter Tuning and Tidymodels
 
+In general, ML algorithms have various hyperparameters that have a substantial impact on the quality of the resulting model fit. One strategy to find good hyperparameters is to try various combinations using cross-validation and then select the best one before refitting the model. Using separate training and testing is very important to prevent overfitting. 
 
 Source: https://juliasilge.com/blog/xgboost-tune-volleyball/
 ```{R}
@@ -337,11 +344,6 @@ final_fit %>%
 # for building intuition around the topic.
 
 # To help answer this, build a confusion matrix for this model and the null model (i.e. always predict no recurrence).
-# A confusion matrix is a 2x2 matrix:
-
-# True Positives | False Positive
-# ---------------|----------------
-# False Negative | True Negative
 
 # Remove This
 # Confusion matrix for the model
@@ -384,7 +386,7 @@ xgboost::xgb.plot.tree(model = extract_fit_parsnip(final_fit)$fit, trees = 0)
 # EXERCISE: Output the first 3 trees
 ```
 
-Model evaluation for binary endpoints is often challenging regardless of the modeling strategy. Here, we'll use a calibration table to assess the predicted probabilities versus observed probabilites across the range of the data. Think of this like a predicted vs. observed plot for continuous data. Calibration is the idea that if we predict a 70% probability for something, the event should in fact happen 70% of the time. In fact, tree-based models often have difficulty predicting on the extreme ranges of the data (why?),  but we don't really have enough data here to see that very well. Ideally, we'd create a lot of different buckets to assess calibration probability in, but there's only a moderate amount of data in the test set, so 4 are used here to illustrate the concept. 
+Model evaluation for binary endpoints is often challenging regardless of the modeling strategy. Here, we'll use a calibration table to assess the predicted probabilities versus observed probabilities across the range of the data. Think of this like a predicted vs. observed plot for continuous data. Calibration is the idea that if we predict a 70% probability for something, the event should in fact happen 70% of the time. In fact, tree-based models often have difficulty predicting on the extreme ranges of the data (why?),  but we don't really have enough data here to see that very well. Ideally, we'd create a lot of different buckets to assess calibration probability in, but there's only a moderate amount of data in the test set, so 4 are used here to illustrate the concept. 
 
 ```{R}
 
@@ -397,7 +399,7 @@ final_fit %>%
             predicted = mean(`.pred_recurrence-events`))
 ```
 
-## Imbalanced Classes
+# Imbalanced Classes
 
 Modeling situations where one class of data we're trying to make predictions for is happens rarely in the dataset. By default, every instance of the data is weighted the same, which means the algorithm will put more weight on correctly predicting the common class, and predictions of the rare class can be poor. One approach is to reweight the training data such that each class is equally weighted. 
 
@@ -475,7 +477,7 @@ final_fit_weighted %>%
 ```
 
 
-## BONUS CONTENT: Model interpretation with Shapley Values
+# Model interpretation with Shapley Values
 
 Shapley values are one strategy for interpreting ML models. For tree-based models (e.g., xgboost, random forests) they are especially computationally efficent. The intuition is to recover a set of additive "forces" that explain the difference between the prediction of a given data point and the mean prediction, by assigning an effect to each feature (covariate), which add up to that difference. 
 
