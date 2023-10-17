@@ -20,3 +20,15 @@ bst <- xgboost(data = train$data, label = train$label, max.depth = 2, eta = 1, n
 # predict
 pred <- predict(bst, test$data)
 
+
+x = tibble(x = 1:5, 
+           y = c("A", "A", "B", NA_character_, NA_character_),
+           z = c(1.1, 2.2, 3.3, NA_real_, NA_real_))
+
+rec <- recipe(x ~ y + z, data = x) %>%
+  step_impute_mode(y) %>%
+  step_impute_median(z)
+
+p <- prep(rec, x)
+
+bake(p, x)
