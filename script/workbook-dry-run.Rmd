@@ -131,7 +131,7 @@ dat <- dat_raw %>%
 # will use default proportion for 75% (3/4) training, 25% testing
 init_split <- initial_split(dat, prop = 3/4)
 
-# Come back here and try 80/20, or 66/33 splits
+# Come back here and try 80/20 or 66/33 splits
 # after fitting the model
 # How do the fits and evaluation change?
 ```
@@ -187,8 +187,8 @@ Fit the model with default tuning parameters.
 # want to "score" models to minimized their logistic loss. Note that
 # this is not specifying logistic regression, rather specifying that the loss
 # function to be minimized is logistic.
-fit1 <- xgboost::xgboost(data = x_train,  # predictors # Make this a fill-in
-                         label = y_train, # responses  # Make this a fill-in
+fit1 <- xgboost::xgboost(data = ,### FILL THIS IN ###  # predictors
+                         label = ,### FILL THIS IN ### # responses  
                          # nrounds: number of boosted trees to add to ensemble
                          #          can be tuned, but fixed here 
                          # What happens if this increased? Try 30 or 100
@@ -320,7 +320,9 @@ xgb_wf <- workflow() %>%
 
 # Set up cross-validation  
 # 5 folds are used to reflect amount of data
-cv_folds <- vfold_cv(training(init_split), v = 5)
+cv_folds <- vfold_cv(training(init_split), 
+                     ### FILL IN REST OF ARGUMENTS ###
+                     )
 
 set.seed(1234)
 
@@ -369,25 +371,20 @@ final_fit %>%
 
 # Question: Is this accuracy good for this dataset? What accuracy would a very naive algorithm have? 
 
-# Answer: Well a model always predicting no events would have approx 70% accuracy
-# naive model of no events. Not modeling per se, but I think is important
-# for building intuition around the topic.
-
 # To help answer this, build a confusion matrix for this model and the null model (i.e. always predict no recurrence).
 
 # Remove This
 # Confusion matrix for the model
-final_fit %>%
-    collect_predictions() %>% 
-    conf_mat(Class, .pred_class)
+
+### CREATE CONFUSION MATRIX ###
 
 # Null model confusion matrix
-testing(init_split) %>%
-  mutate(null_model_prediction = first(Class[Class == "no-recurrence-events"])) %>%
-  conf_mat(truth = "Class", estimate = null_model_prediction)
 
+### CREATE CONFUSION MATRIX FOR NAIVE MODEL ### 
 
 # Question: What about focusing on the patients with recurrence-events? What are alternatives to ROC in the yardstick package for calculating an AUC?
+
+
 
 # The precision-recall curve focuses on the prediction of one event type of interest. 
 # It is related to the ROC curve
@@ -413,7 +410,8 @@ final_fit %>%
 # This is output in the Rstudio viewer
 xgboost::xgb.plot.tree(model = extract_fit_parsnip(final_fit)$fit, trees = 0)
 
-# EXERCISE: Output the first 3 trees. How do you interpret this sequence of trees
+### EXERCISE: Output the first 3 trees. ### 
+# How do you interpret this sequence of trees?
 ```
 
 Model evaluation for binary endpoints is often challenging regardless of the modeling strategy. Here, we'll use a calibration table to assess the predicted probabilities versus observed probabilities across the range of the data. Think of this like a predicted vs. observed plot for continuous data. Calibration is the idea that if we predict a 70% probability for something, the event should in fact happen 70% of the time. In fact, tree-based models often have difficulty predicting on the extreme ranges of the data (why?),  but we don't really have enough data here to see that very well. Ideally, we'd create a lot of different buckets to assess calibration probability in, but there's only a moderate amount of data in the test set, so 4 are used here to illustrate the concept. 
@@ -469,7 +467,9 @@ tuning_results_weights <- tune_grid(
 collect_metrics(tuning_results_weights)
 
 # Use the precision-recall AUC to pick the best model
-best_auc_weighted <- select_best(tuning_results_weights, metric = "pr_auc")
+best_auc_weighted <- select_best(tuning_results_weights,
+                                 metric = ### FILL THIS IN ###
+)
 
 
 # Create the final model, with actual values for the hyperparameters 
@@ -483,24 +483,12 @@ final_fit_weighted <- final_wf_weighted %>%
   last_fit(init_split) 
 
 # TODO: Make a precision-recall curve
-# Remove this for exercise
-final_fit_weighted %>%
-  collect_predictions() %>% 
-  pr_curve(Class, `.pred_recurrence-events`, event_level = "first") %>% 
-  autoplot()
+
 
 # TODO: Caclulate the precision-recall AUC
-# Remove this for exercise
-final_fit_weighted %>%
-    collect_predictions() %>% 
-    pr_auc(Class, `.pred_recurrence-events`, event_level = "first")
 
 # Calculate the ROC AUC.
-# Remove this for exercise
 # How does this compare to the previous model
-final_fit_weighted %>%
-    collect_predictions() %>% 
-    roc_auc(Class, `.pred_recurrence-events`, event_level = "first")
 
 # Question: How has using the class weights changed each of the performance metrics
 # (ROC AUC, PR AUC, Accuracy)
