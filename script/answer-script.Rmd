@@ -27,7 +27,7 @@ library(xgboost)
 data_dir <- here::here("data", "source")
 ```
 
-Data source: https://archive.ics.uci.edu/ml/datasets/breast+cancer. Class is the dependent variable, and the goal is to classify patients based on the other features (covariates). 
+Data source: https://archive.ics.uci.edu/ml/datasets/breast+cancer. Class is the dependent variable, and the goal is to classify patients based on the other features (covariates). There is one row per patient.
 
 ```{R}
 
@@ -224,9 +224,9 @@ predictions %>%
 
 predictions %>%
   mutate(truth = Class,
-         pred = factor(if_else(pred_pr >= 0.5,
-                               "no-recurrence-events", 
-                               "recurrence-events", ), 
+         pred = factor(if_else(pred_pr >= 0.5, 
+                               "recurrence-events",
+                               "no-recurrence-events"), 
                        levels = c("recurrence-events", 
                                   "no-recurrence-events"))) %>%
   yardstick::conf_mat(estimate = pred, truth = truth)
@@ -242,9 +242,8 @@ predictions %>%
 
 # Hyperparameter Tuning and Tidymodels
 
-In general, ML algorithms have various hyperparameters that have a substantial impact on the quality of the resulting model fit. One strategy to find good hyperparameters is to try various combinations using cross-validation and then select the best one before refitting the model. Using separate training and testing is very important to prevent overfitting. 
+In general, ML algorithms have various hyperparameters that have a substantial impact on the quality of the resulting model fit. One strategy to find good hyperparameters is to try various combinations using cross-validation and then select the best one before refitting the model. Using separate training and testing is very important to prevent overfitting. We will also use the tidymodels package extensively now to help organize all the model we will fit.
 
-Source: https://juliasilge.com/blog/xgboost-tune-volleyball/
 ```{R}
 
 # Slightly tweak the formatting of the dataset for tidymodels format
@@ -294,12 +293,12 @@ xgb_spec_all <- boost_tree(
 # What values seem to work well?
 # Alternatively, what values lead to bad results?
 xgb_spec <- boost_tree(
-  trees = 15,
+  trees = 25,
   tree_depth = tune(),
   min_n = tune(),
   loss_reduction = 0,        
   sample_size = 1.0, 
-  learn_rate = 0.3      
+  learn_rate = 0.25      
 ) %>%
   set_engine("xgboost") %>%
   set_mode("classification")
@@ -309,7 +308,7 @@ xgb_spec <- boost_tree(
 xgb_grid <- grid_latin_hypercube(
   tree_depth(),
   min_n(),
-  size = 50
+  size = 25
 )
 
 # Combine preprocessing and fitting into a "workflow"
@@ -320,7 +319,7 @@ xgb_wf <- workflow() %>%
 
 # Set up cross-validation  
 # 5 folds are used to reflect amount of data
-cv_folds <- vfold_cv(training(init_split), v = 5)
+cv_folds <- vfold_cv(training(init_split), v = 5,  strata = Class)
 
 set.seed(1234)
 
@@ -373,7 +372,7 @@ final_fit %>%
 # naive model of no events. Not modeling per se, but I think is important
 # for building intuition around the topic.
 
-# To help answer this, build a confusion matrix for this model and the null model (i.e. always predict no recurrence).
+# To help answer this, build a confusion matrix for this model and the naive model (i.e. always predict no recurrence).
 
 # Remove This
 # Confusion matrix for the model
@@ -542,6 +541,11 @@ shap_plot
 # e.g. fastshap
 
 # Question: What does the shapley plot look like using overfit model on the training vs testing sets?
+
+# Excercise: Another common shapley plot has a covariate on the x-axis, 
+# the shapley value on the y axis, and a second covariate as the color
+# to explore interaction effects. Using this style of plot, 
+# what interactions are interesting? 
 ```
 
 We also sanity check the shapley predictions by making predictions for two different values of tumor sizes for one set of covariate values. This is analogous to plotting the predictions for a reference individual and permuting the one covariate.
@@ -559,3 +563,11 @@ predict(extract_workflow(final_fit),
         new_data = x_predict,
         type = "prob")
 ```
+
+
+## References
+
+https://en.wikipedia.org/wiki/Gradient_boosting
+https://www.tidymodels.org/
+https://xgboost.readthedocs.io/en/stable/index.html
+https://juliasilge.com/blog/xgboost-tune-volleyball/
