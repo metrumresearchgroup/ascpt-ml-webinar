@@ -23,6 +23,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(tidymodels)
 library(xgboost)
+library(DiagrammeR) # Just for visualization
 
 data_dir <- here::here("data", "source")
 ```
@@ -187,12 +188,12 @@ Fit the model with default tuning parameters.
 # want to "score" models to minimized their logistic loss. Note that
 # this is not specifying logistic regression, rather specifying that the loss
 # function to be minimized is logistic.
-fit1 <- xgboost::xgboost(data = ,### FILL THIS IN ###  # predictors
-                         label = ,### FILL THIS IN ### # responses  
+fit1 <- xgboost::xgboost(data = x_train,### FILL THIS IN ###  # predictors
+                         label = y_train,### FILL THIS IN ### # responses  
                          # nrounds: number of boosted trees to add to ensemble
                          #          can be tuned, but fixed here 
                          # What happens if this increased? Try 30 or 100
-                         nrounds = 15,  
+                         nrounds = 100,  
                          # see note above about logistic loss function
                          params = list(objective = "binary:logistic"))
 
@@ -244,7 +245,6 @@ predictions %>%
 
 In general, ML algorithms have various hyperparameters that have a substantial impact on the quality of the resulting model fit. One strategy to find good hyperparameters is to try various combinations using cross-validation and then select the best one before refitting the model. Using separate training and testing is very important to prevent overfitting. 
 
-Source: https://juliasilge.com/blog/xgboost-tune-volleyball/
 ```{R}
 
 # Slightly tweak the formatting of the dataset for tidymodels format
@@ -408,6 +408,7 @@ final_fit %>%
 # We can look at the sequence of trees fit by xgboost for the final model
 # Here's the first one
 # This is output in the Rstudio viewer
+install.packages("DiagrammeR") 
 xgboost::xgb.plot.tree(model = extract_fit_parsnip(final_fit)$fit, trees = 0)
 
 ### EXERCISE: Output the first 3 trees. ### 
@@ -547,3 +548,9 @@ predict(extract_workflow(final_fit),
         new_data = x_predict,
         type = "prob")
 ```
+
+## References
+
+https://www.tidymodels.org/
+https://xgboost.readthedocs.io/en/stable/index.html
+https://juliasilge.com/blog/xgboost-tune-volleyball/
