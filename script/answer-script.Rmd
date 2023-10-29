@@ -293,21 +293,23 @@ xgb_spec_all <- boost_tree(
 # What values seem to work well?
 # Alternatively, what values lead to bad results?
 xgb_spec <- boost_tree(
-  trees = 25,
+  trees = 15,
   tree_depth = tune(),
   min_n = tune(),
   loss_reduction = 0,        
   sample_size = 1.0, 
-  learn_rate = 0.25      
+  learn_rate = 0.3      
 ) %>%
   set_engine("xgboost") %>%
   set_mode("classification")
 
 # One way to select the grid of points to tune
 # See the help/google for more details
+# We specifically set the ranges to more
+# plausible values for the dataset size
 xgb_grid <- grid_latin_hypercube(
-  tree_depth(),
-  min_n(),
+  tree_depth(range = c(2, 6)),
+  min_n(range = c(1, 15)),
   size = 25
 )
 
@@ -386,7 +388,11 @@ testing(init_split) %>%
   conf_mat(truth = "Class", estimate = null_model_prediction)
 
 
-# Question: What about focusing on the patients with recurrence-events? What are alternatives to ROC in the yardstick package for calculating an AUC?
+# Question: What about focusing on the patients with recurrence-events?
+# What are alternatives to ROC in the yardstick package for calculating an AUC?
+
+# Question: Why are the performance metrics worse in the final fit than in the 
+# cross-validation
 
 # The precision-recall curve focuses on the prediction of one event type of interest. 
 # It is related to the ROC curve
