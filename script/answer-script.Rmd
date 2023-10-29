@@ -459,8 +459,8 @@ xgb_wf_weights <- xgb_wf %>%
   update_recipe(recipe_xgboost_tidymodels_weights) %>%
   add_case_weights(case_weight)
 
-# As before, use cross validation to tune the model hyperparameters
-tuning_results_weights <- tune_grid(
+# TODO: As before, use cross validation to tune the model hyperparameters
+# Use precision-recall tuning_results_weights <- tune_grid(
   xgb_wf_weights,
   resamples = cv_folds,
   grid = xgb_grid,
@@ -494,7 +494,7 @@ final_fit_weighted %>%
   pr_curve(Class, `.pred_recurrence-events`, event_level = "first") %>% 
   autoplot()
 
-# TODO: Caclulate the precision-recall AUC
+# TODO: Calculate the precision-recall AUC
 # Remove this for exercise
 final_fit_weighted %>%
     collect_predictions() %>% 
